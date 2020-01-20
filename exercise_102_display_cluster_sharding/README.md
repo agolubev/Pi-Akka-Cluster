@@ -12,10 +12,10 @@ To create DB schema yo uned to run [SQL script](https://github.com/akka/akka-per
 #Initialize shard data
 
 ```
-curl -d '{"amount":10}' -H "Content-Type: application/json" -X POST http://node-0:8080/user/Alex
-curl -d '{"amount":20}' -H "Content-Type: application/json" -X POST http://node-0:8080/user/Max
-curl -d '{"amount":30}' -H "Content-Type: application/json" -X POST http://node-1:8080/user/Peter
-curl -d '{"amount":40}' -H "Content-Type: application/json" -X POST http://node-1:8080/user/Vlad
+curl -d '{"points":10}' -H "Content-Type: application/json" -X POST http://node-0:8080/user/Alex
+curl -d '{"points":20}' -H "Content-Type: application/json" -X POST http://node-0:8080/user/Max
+curl -d '{"points":30}' -H "Content-Type: application/json" -X POST http://node-1:8080/user/Peter
+curl -d '{"points":40}' -H "Content-Type: application/json" -X POST http://node-1:8080/user/Vlad
 ```
 
 #Get persistent data

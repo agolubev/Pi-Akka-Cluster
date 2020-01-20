@@ -29,7 +29,7 @@ import akka.pattern.{ask, pipe}
 import akka.util.Timeout
 import akka_oled.ButtonPushHandlers.{NEXT_SCREEN, RESET_SCREEN}
 import akka_oled.{ButtonPushHandlers, Logo}
-import com.lightbend.akka_oled.Client.{Get, PostTransaction}
+import com.lightbend.akka_oled.Client.{Get, PostPoints}
 import com.lightbend.akka_oled.ClusterShardingStatus.{Notification, SwitchFromTitleToScreen}
 import eroled.{BasicFont, OLEDWindow, SmartOLED}
 
@@ -67,14 +67,14 @@ class ClusterShardingStatus extends Actor with ActorLogging with Logo with Butto
    implicit val timeout: Timeout = 3.seconds
 
    val extractEntityId: ShardRegion.ExtractEntityId = {
-      case msg@PostTransaction(name, _) => (name, msg)
+      case msg@PostPoints(name, _) => (name, msg)
       case msg@Get(name) => (name, msg)
    }
 
    val numberOfShards = 100
 
    val extractShardId: ShardRegion.ExtractShardId = {
-      case PostTransaction(id, _) => (id.hashCode % numberOfShards).toString
+      case PostPoints(id, _) => (id.hashCode % numberOfShards).toString
       case Get(id) => (id.hashCode % numberOfShards).toString
       case ShardRegion.StartEntity(id) =>
          // StartEntity is used by remembering entities feature
@@ -193,8 +193,8 @@ class ClusterShardingStatus extends Actor with ActorLogging with Logo with Butto
       case get@Get(name) =>
          //(counterRegion ? ShardRegion.getShardRegionStateInstance).pipeTo(self)
          (counterRegion ? get).pipeTo(sender())
-      case post@PostTransaction(name, amount) =>
-         (counterRegion ? PostTransaction(name, amount)).pipeTo(sender())
+      case post@PostPoints(name, amount) =>
+         (counterRegion ? PostPoints(name, amount)).pipeTo(sender())
       case CurrentShardRegionState(set) =>
          //add new shards that were rebalanced
          val entityIds = set.flatMap(_.entityIds)

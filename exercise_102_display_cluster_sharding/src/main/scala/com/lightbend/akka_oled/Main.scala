@@ -27,7 +27,7 @@ import akka.management.scaladsl.AkkaManagement
 import akka.pattern.ask
 import akka.stream.ActorMaterializer
 import akka.util.Timeout
-import com.lightbend.akka_oled.Client.{Get, PostTransaction}
+import com.lightbend.akka_oled.Client.{Get, PostPoints}
 import com.typesafe.config.ConfigFactory
 import spray.json._
 
@@ -35,11 +35,11 @@ import scala.concurrent.Future
 import scala.concurrent.duration._
 
 object Main extends SprayJsonSupport with DefaultJsonProtocol{
-   case class AddTransaction(amount:Int)
+   case class AddPoints(points:Int)
 
    def main(args: Array[String]): Unit = {
       val baseConfig = ConfigFactory.load()
-      implicit val transactionFormat = jsonFormat1(AddTransaction)
+      implicit val transactionFormat = jsonFormat1(AddPoints)
       implicit val system = ActorSystem("akka-oled", baseConfig)
       val clusterStatusTracker: ActorRef = system.actorOf(ClusterShardingStatus.props(),ClusterShardingStatus.ACTOR_NAME)
 
@@ -57,8 +57,8 @@ object Main extends SprayJsonSupport with DefaultJsonProtocol{
                   }
                },
                post {
-                  entity(as[AddTransaction]) { transaction =>
-                     clusterStatusTracker ! PostTransaction(username, transaction.amount)
+                  entity(as[AddPoints]) { transaction =>
+                     clusterStatusTracker ! PostPoints(username, transaction.points)
                      complete("Ok\n")
                   }
                }

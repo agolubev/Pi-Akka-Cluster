@@ -15,7 +15,10 @@ To create DB schema yo uned to run [SQL script](https://github.com/akka/akka-per
 curl -d '{"points":10}' -H "Content-Type: application/json" -X POST http://node-0:8080/user/Alex
 curl -d '{"points":20}' -H "Content-Type: application/json" -X POST http://node-0:8080/user/Max
 curl -d '{"points":30}' -H "Content-Type: application/json" -X POST http://node-1:8080/user/Peter
-curl -d '{"points":40}' -H "Content-Type: application/json" -X POST http://node-1:8080/user/Vlad
+curl -d '{"points":40}' -H "Content-Type: application/json" -X POST http://node-1:8080/user/Richard
+curl -d '{"points":40}' -H "Content-Type: application/json" -X POST http://node-1:8080/user/Jim
+curl -d '{"points":40}' -H "Content-Type: application/json" -X POST http://node-1:8080/user/Michele
+
 ```
 
 #Get persistent data
@@ -31,4 +34,4 @@ This can be seen on display as quick updates of point number once system applies
 
 #Mark node as down
 
-`curl -d 'operation=DOWN' -X PUT http://node-0:8558/cluster/members/akka-oled@192.168.1.102:2550`
+`curl -d 'operation=DOWN' -X PUT http://node-0:8558/cluster/members/akka-oled@node-2:2550`

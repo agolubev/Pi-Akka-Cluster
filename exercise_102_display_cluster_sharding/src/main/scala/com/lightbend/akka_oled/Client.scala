@@ -58,7 +58,12 @@ class Client(ref: ActorRef) extends PersistentActor {
 
    override def receiveCommand: Receive = {
       case PostPoints(name, amount) =>
-         persist(PointsAdded(name, amount))(updateState)
+
+         persist(PointsAdded(name, amount)) {
+            a =>
+               updateState(a)
+               sender() ! "Ok\n"
+         }
       case Get(name) =>
          sender() ! total
          ref ! Notification(name, total)

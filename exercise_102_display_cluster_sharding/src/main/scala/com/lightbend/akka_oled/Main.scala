@@ -25,7 +25,6 @@ import akka.http.scaladsl.marshallers.sprayjson.SprayJsonSupport
 import akka.http.scaladsl.server.Directives._
 import akka.management.scaladsl.AkkaManagement
 import akka.pattern.ask
-import akka.stream.ActorMaterializer
 import akka.util.Timeout
 import com.lightbend.akka_oled.Client.{Get, PostPoints}
 import com.typesafe.config.ConfigFactory
@@ -43,14 +42,14 @@ object Main extends SprayJsonSupport with DefaultJsonProtocol{
       implicit val system = ActorSystem("akka-oled", baseConfig)
       val clusterStatusTracker: ActorRef = system.actorOf(ClusterShardingStatus.props(),ClusterShardingStatus.ACTOR_NAME)
 
-      implicit val timeout: Timeout = 3.seconds
-      implicit val materializer = ActorMaterializer()
+      implicit val timeout: Timeout = 6.seconds
       implicit val executionContext = system.dispatcher
 
       val route =
          pathPrefix("user" / """[0-9a-zA-Z]+""".r) { username =>
             concat(
                get {
+                  println("received get")
                   val total:Future[Int] = clusterStatusTracker.ask(Get(username)).mapTo[Int]
                   onSuccess(total) {
                      a: Int => complete(a.toString + "\n")
@@ -58,15 +57,17 @@ object Main extends SprayJsonSupport with DefaultJsonProtocol{
                },
                post {
                   entity(as[AddPoints]) { transaction =>
-                     clusterStatusTracker ! PostPoints(username, transaction.points)
-                     complete("Ok\n")
+                     val ack = clusterStatusTracker.ask(PostPoints(username, transaction.points)).mapTo[String]
+                     onSuccess(ack){
+                        result => complete(result)
+                     }
                   }
                }
             )
          }
 
 
-      val serverSource = Http().bindAndHandle(route,
+      Http().bindAndHandle(route,
          interface = baseConfig.getString("cluster-node-configuration.node-hostname"), port = 8080)
 
       AkkaManagement(system).start

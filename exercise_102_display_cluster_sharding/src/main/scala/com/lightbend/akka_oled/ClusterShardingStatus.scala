@@ -30,7 +30,7 @@ import akka.util.Timeout
 import akka_oled.ButtonPushHandlers.{NEXT_SCREEN, RESET_SCREEN}
 import akka_oled.{ButtonPushHandlers, Logo}
 import com.lightbend.akka_oled.Client.{Get, PostPoints}
-import com.lightbend.akka_oled.ClusterShardingStatus.{Notification, SwitchFromTitleToScreen}
+import com.lightbend.akka_oled.ClusterShardingStatus.{Notification, SwitchFromTitleToScreen, TeamNotification}
 import eroled.{BasicFont, OLEDWindow, SmartOLED}
 
 import scala.collection.mutable
@@ -39,233 +39,300 @@ import scala.concurrent.duration._
 
 object ClusterShardingStatus {
 
-   case class SwitchFromTitleToScreen(screen: Int)
+  case class SwitchFromTitleToScreen(screen: Int)
 
-   case class Notification(name: String, total: Int)
+  case class Notification(name: String, total: Int)
+  case class TeamNotification(name: String, total: Int)
 
-   def props() = Props(new ClusterShardingStatus())
+  def props() = Props(new ClusterShardingStatus())
 
-   val ACTOR_NAME = "cluster-sharding-status"
+  val ACTOR_NAME = "cluster-sharding-status"
 }
 
 class ClusterShardingStatus extends Actor with ActorLogging with Logo with ButtonPushHandlers {
-   var oled: SmartOLED = new SmartOLED(new BasicFont())
-   val window: OLEDWindow = new OLEDWindow(oled, 0, 0, 256, 64)
+  var oled: SmartOLED = new SmartOLED(new BasicFont())
+  val window: OLEDWindow = new OLEDWindow(oled, 0, 0, 256, 64)
 
-   implicit val ec: ExecutionContext = context.dispatcher
+  implicit val ec: ExecutionContext = context.dispatcher
 
-   val screens = Map(0 -> "Cluster State", 1 -> "Sharding state")
-   var currentScreen = 0
-   var showingLogo = true
-   var showingTitle = false
-
-
-   var cluster =  mutable.LinkedHashMap[String, String]("Node 0" -> "N/A", "Node 1" -> "N/A", "Node 2" -> "N/A")
-   val clients = mutable.Map[String, Int]()
-   val shardsClients = mutable.Map[String, Set[String]]()
+  val screens = Map(0 -> "Cluster State", 1 -> "Sharding state")
+  var currentScreen = 0
+  var showingLogo = true
+  var showingTitle = false
 
 
-   implicit val timeout: Timeout = 6.seconds
+  var cluster = mutable.LinkedHashMap[String, String]("Node 0" -> "N/A", "Node 1" -> "N/A", "Node 2" -> "N/A")
+  val clients = mutable.Map[String, Int]()
+  val teams = mutable.Map[String, Int]()
 
-   val extractEntityId: ShardRegion.ExtractEntityId = {
-      case msg@PostPoints(name, _) => (name, msg)
-      case msg@Get(name) => (name, msg)
-   }
+  val shardsClients = mutable.Map[String, Set[String]]()
+  val shardsTeams = mutable.Map[String, Set[String]]()
 
-   val numberOfShards = 6
 
-   val extractShardId: ShardRegion.ExtractShardId = {
-      case PostPoints(id, _) => (Math.abs(id.hashCode) % numberOfShards).toString
-      case Get(id) => (Math.abs(id.hashCode) % numberOfShards).toString
+  implicit val timeout: Timeout = 6.seconds
+
+  val teamRegion: ActorRef = {
+    val extractEntityId: ShardRegion.ExtractEntityId = {
+      case msg@Team.PostPoints(name, _) => (name, msg)
+      case msg@Team.Get(name) => (name, msg)
+    }
+
+    val numberOfShards = 6
+
+    val extractShardId: ShardRegion.ExtractShardId = {
+      case Team.PostPoints(id, _) => (Math.abs(id.hashCode) % numberOfShards).toString
+      case Team.Get(id) => (Math.abs(id.hashCode) % numberOfShards).toString
       case ShardRegion.StartEntity(id) =>
-         // StartEntity is used by remembering entities feature
-         (Math.abs(id.hashCode) % numberOfShards).toString
-   }
+        // StartEntity is used by remembering entities feature
+        (Math.abs(id.hashCode) % numberOfShards).toString
+    }
 
-   val counterRegion: ActorRef = ClusterSharding(context.system).start(
-      typeName = "GameStorage",
-      entityProps = Client.props(self),
+    ClusterSharding(context.system).start(
+      typeName = "TeamStorage",
+      entityProps = Team.props(self),
       settings = ClusterShardingSettings(context.system),
       extractEntityId = extractEntityId,
       extractShardId = extractShardId)
+  }
 
-   val dur: FiniteDuration = 5.seconds
+  val counterRegion: ActorRef = {
+    val extractEntityId: ShardRegion.ExtractEntityId = {
+      case msg@PostPoints(name, _) => (name, msg)
+      case msg@Get(name) => (name, msg)
+    }
 
-   override def preStart(): Unit = {
-      log.info("BasicOLED initialized!")
-      Cluster(context.system)
-         .subscribe(self,
-            InitialStateAsEvents,
-            classOf[LeaderChanged],
-            classOf[ReachabilityEvent],
-            classOf[MemberEvent]
-         )
-      initButtonPush(self)
-      renderLogo()
-      //context.system.scheduler.scheduleOnce(2.seconds, self, CurrentShardRegionState(Set()))
-      context.system.scheduler.scheduleOnce(2.seconds, counterRegion, ShardRegion.getShardRegionStateInstance)
+    val numberOfShards = 6
 
-   }
+    val extractShardId: ShardRegion.ExtractShardId = {
+      case PostPoints(id, _) => (Math.abs(id.hashCode) % numberOfShards).toString
+      case Get(id) => (Math.abs(id.hashCode) % numberOfShards).toString
+      case ShardRegion.StartEntity(id) =>
+        // StartEntity is used by remembering entities feature
+        (Math.abs(id.hashCode) % numberOfShards).toString
+    }
 
-   def mapHostToName(ip: String): String = {
-      ip match {
-         case "node-0" => "Node 0"
-         case "node-1" => "Node 1"
-         case "node-2" => "Node 2"
-         case _ => "Node X"
+    ClusterSharding(context.system).start(
+      typeName = "UserStorage",
+      entityProps = Client.props(self,teamRegion),
+      settings = ClusterShardingSettings(context.system),
+      extractEntityId = extractEntityId,
+      extractShardId = extractShardId)
+  }
+
+
+
+  val dur: FiniteDuration = 5.seconds
+
+  override def preStart(): Unit = {
+    log.info("BasicOLED initialized!")
+    Cluster(context.system)
+      .subscribe(self,
+        InitialStateAsEvents,
+        classOf[LeaderChanged],
+        classOf[ReachabilityEvent],
+        classOf[MemberEvent]
+      )
+    initButtonPush(self)
+    renderLogo()
+    //context.system.scheduler.scheduleOnce(2.seconds, self, CurrentShardRegionState(Set()))
+    context.system.scheduler.scheduleAtFixedRate(2.seconds, 2.seconds, counterRegion, ShardRegion.getShardRegionStateInstance)
+    context.system.scheduler.scheduleAtFixedRate(2.seconds, 2.seconds, teamRegion, ShardRegion.getShardRegionStateInstance)
+
+  }
+
+  def mapHostToName(ip: String): String = {
+    ip match {
+      case "node-0" => "Node 0"
+      case "node-1" => "Node 1"
+      case "node-2" => "Node 2"
+      case _ => "Node X"
+    }
+  }
+
+  private def nodeStatus(member: Member, status: String): Unit = {
+    cluster += mapHostToName(member.address.host.get) -> status
+    renderState
+  }
+
+  private def changeLeader(address: Address): Unit = {
+    cluster += "Leader" -> mapHostToName(address.host.getOrElse("N/A"))
+    renderState
+  }
+
+
+  private def renderState(): Unit = {
+
+    if (!showingLogo && !showingTitle) {
+      if (currentScreen == 0) {
+        if (cluster.nonEmpty)
+          oled.drawMultilineString(cluster.map[String] { case (key, value) => key + ": " + value + "        " }.mkString("\n"))
+        else
+          oled.drawString(0, 21, "Joining cluster")
+      } else {
+        if (clients.nonEmpty) {
+          var t = shardsTeams.flatMap[String] {
+            case (key, teams) => teams.map {
+              name => "TeamSrd#" + key + "->" + name + ": " + this.teams.getOrElse(name, 0)
+            }
+          }.mkString("\n")
+          t = if (teams.nonEmpty) t + "\n" else t
+          oled.drawMultilineString(
+            t +
+              shardsClients.flatMap[String] {
+                case (key, clients) => clients.map {
+                  name => "UserSrd#" + key + "->" + name + ": " + this.clients.getOrElse(name, 0)
+                }
+              }.mkString("\n"))
+        }
+        else
+          oled.drawMultilineString("No data")
       }
-   }
+    }
+  }
 
-   private def nodeStatus(member: Member, status: String): Unit = {
-      cluster += mapHostToName(member.address.host.get) -> status
+  private def renderLogo(): Unit = {
+    oled.clearRam()
+    window.drawBwImageCentered(logoWidth, logoHeight, 0xFF.toByte, logoBytes)
+    window.drawScreenBuffer()
+    showingLogo = true
+    context.system.scheduler.scheduleOnce(2 second, self, SWITCH_FROM_LOGO_TO_SCREEN)
+    ()
+  }
+
+  private def renderTitle(): Unit = {
+    showingLogo = false
+    showingTitle = true
+    oled.clearRam()
+    oled.drawString(0, 21, "Screen " + (currentScreen) + ": " + screens(currentScreen))
+    log.info("Rendered title")
+    context.system.scheduler.scheduleOnce(2 second, self, SwitchFromTitleToScreen(currentScreen))
+    ()
+  }
+
+  override def postStop(): Unit = {
+    oled.resetOLED()
+    Cluster(context.system).unsubscribe(self)
+  }
+
+  override def receive: Actor.Receive = {
+    case RESET_SCREEN =>
+      currentScreen = 0
+      log.info("Reset Screen")
+      renderTitle
+    case NEXT_SCREEN =>
+      currentScreen = if (currentScreen == screens.size - 1) 0 else currentScreen + 1
+      log.info("Next screen")
+      renderTitle
+
+    case SWITCH_FROM_LOGO_TO_SCREEN =>
+      renderTitle
+
+    case Notification(name, total) =>
+      clients += name -> total
       renderState
-   }
-
-   private def changeLeader(address: Address): Unit = {
-      cluster += "Leader" -> mapHostToName(address.host.getOrElse("N/A"))
+    case TeamNotification(name, total) =>
+      teams += name -> total
       renderState
-   }
 
-
-   private def renderState(): Unit = {
-
-      if (!showingLogo && !showingTitle) {
-         if(currentScreen == 0) {
-            if (!cluster.isEmpty)
-               oled.drawMultilineString(cluster.map[String] { case (key, value) => key + ": " + value + "        " }.mkString("\n"))
-            else
-               oled.drawString(0, 21, "Joining cluster")
-         } else {
-            if (!clients.isEmpty)
-               oled.drawMultilineString(shardsClients.flatMap[String] {
-                  case (key, clients) => clients.map{
-                     name => "Shard#" + key + "->"+name+": " + this.clients.getOrElse(name,0)
-                  }}.mkString("\n"))
-            else
-               oled.drawMultilineString("No data")
-         }
+    case SwitchFromTitleToScreen(screen) =>
+      if (screen == currentScreen) {
+        showingTitle = false
+        log.info("Render screen")
+        oled.clearRam()
+        renderState
       }
-   }
 
-   private def renderLogo():Unit = {
-      oled.clearRam()
-      window.drawBwImageCentered(logoWidth, logoHeight, 0xFF.toByte, logoBytes)
-      window.drawScreenBuffer()
-      showingLogo = true
-      context.system.scheduler.scheduleOnce(2 second, self, SWITCH_FROM_LOGO_TO_SCREEN)
-      ()
-   }
+    case get@Get(name) =>
+      //(counterRegion ? ShardRegion.getShardRegionStateInstance).pipeTo(self)
+      (counterRegion ? get).pipeTo(sender())
+    case get@Team.Get(name) =>
+      //(counterRegion ? ShardRegion.getShardRegionStateInstance).pipeTo(self)
+      (teamRegion ? get).pipeTo(sender())
+    case post@PostPoints(name, amount) =>
+      (counterRegion ? PostPoints(name, amount)).pipeTo(sender())
+    case CurrentShardRegionState(set) =>
+      //add new shards that were rebalanced
+      if(set.headOption.nonEmpty && set.headOption.get.entityIds.nonEmpty) {
+        if(set.headOption.get.entityIds.head.size > 1) {
+          //users
 
-   private def renderTitle():Unit =  {
-      showingLogo = false
-      showingTitle = true
-      oled.clearRam()
-      oled.drawString(0, 21, "Screen " + (currentScreen) + ": " + screens(currentScreen))
-      log.info("Rendered title")
-      context.system.scheduler.scheduleOnce(2 second, self, SwitchFromTitleToScreen(currentScreen))
-      ()
-   }
+          val entityIds: Set[String] = set.flatMap(_.entityIds)
 
-   override def postStop(): Unit = {
-      oled.resetOLED()
-      Cluster(context.system).unsubscribe(self)
-   }
-
-   override def receive: Actor.Receive = {
-      case RESET_SCREEN =>
-         currentScreen = 0
-         log.info("Reset Screen")
-         renderTitle
-      case NEXT_SCREEN =>
-         currentScreen = if (currentScreen == screens.size - 1) 0 else currentScreen + 1
-         log.info("Next screen")
-         renderTitle
-
-      case SWITCH_FROM_LOGO_TO_SCREEN =>
-         renderTitle
-
-      case Notification(name, total) =>
-         clients += name -> total
-         renderState
-
-      case SwitchFromTitleToScreen(screen) =>
-         if (screen == currentScreen) {
-            showingTitle = false
-            log.info("Render screen")
-            oled.clearRam()
-            renderState
-         }
-
-      case get@Get(name) =>
-         //(counterRegion ? ShardRegion.getShardRegionStateInstance).pipeTo(self)
-         (counterRegion ? get).pipeTo(sender())
-      case post@PostPoints(name, amount) =>
-         (counterRegion ? PostPoints(name, amount)).pipeTo(sender())
-      case CurrentShardRegionState(set) =>
-         //add new shards that were rebalanced
-         val entityIds:Set[String] = set.flatMap(_.entityIds)
-
-         shardsClients.clear()
-         set.foreach(a =>
+          shardsClients.clear()
+          set.foreach(a =>
             shardsClients.put(a.shardId.toString, a.entityIds.map(_.toString))
-         )
+          )
 
-         entityIds.foreach(a => if (clients.get(a).isEmpty) clients += a -> 0)
-         //remove old shards
-         clients.foreach { case (k, v) => if (!entityIds.contains(k)) clients -= k }
-
-         renderState
-         context.system.scheduler.scheduleOnce(1.seconds, counterRegion, ShardRegion.getShardRegionStateInstance)
+          entityIds.foreach(a => if (clients.get(a).isEmpty) clients += a -> 0)
+          //remove old shards
+          clients.foreach { case (k, v) => if (!entityIds.contains(k)) clients -= k }
 
 
-      case msg@MemberUp(member) =>
-         nodeStatus(member, "Up")
-         log.debug(s"$msg")
+        } else {
+          // teams
+          val entityIds: Set[String] = set.flatMap(_.entityIds)
 
-      case msg@MemberLeft(member) =>
-         nodeStatus(member, "Left")
-         log.debug(s"$msg")
+          shardsTeams.clear()
+          set.foreach(a =>
+            shardsTeams.put(a.shardId.toString, a.entityIds.map(_.toString))
+          )
 
-      case msg@MemberExited(member) =>
-         nodeStatus(member, "Exited")
-         log.debug(s"$msg")
+          entityIds.foreach(a => if (teams.get(a).isEmpty) teams += a -> 0)
+          //remove old shards
+          teams.foreach { case (k, v) => if (!entityIds.contains(k)) teams -= k }
+        }
+        renderState
+      }
 
-      case msg@MemberJoined(member) =>
-         nodeStatus(member, "Joined")
-         log.debug(s"$msg")
 
-      case msg@MemberRemoved(member, _) =>
-         nodeStatus(member, "Removed")
-         log.debug(s"$msg")
+    case msg@MemberUp(member) =>
+      nodeStatus(member, "Up")
+      log.debug(s"$msg")
 
-      case msg@MemberWeaklyUp(member) =>
-         nodeStatus(member, "WeaklyUp")
-         log.debug(s"$msg")
+    case msg@MemberLeft(member) =>
+      nodeStatus(member, "Left")
+      log.debug(s"$msg")
 
-      case msg@ReachableMember(member) if member.status == Up =>
-         nodeStatus(member, "Up")
-         log.debug(s"$msg")
+    case msg@MemberExited(member) =>
+      nodeStatus(member, "Exited")
+      log.debug(s"$msg")
 
-      case msg@ReachableMember(member) if member.status == WeaklyUp =>
-         nodeStatus(member, "Weakly Up")
-         log.debug(s"$msg")
+    case msg@MemberJoined(member) =>
+      nodeStatus(member, "Joined")
+      log.debug(s"$msg")
 
-      case msg@UnreachableMember(member) =>
-         nodeStatus(member, "Unreachable")
-         log.debug(s"$msg")
+    case msg@MemberRemoved(member, _) =>
+      nodeStatus(member, "Removed")
+      log.debug(s"$msg")
 
-      case msg@LeaderChanged(Some(leader)) =>
-         changeLeader(leader)
-         log.debug(s"$msg")
+    case msg@MemberWeaklyUp(member) =>
+      nodeStatus(member, "WeaklyUp")
+      log.debug(s"$msg")
 
-      case msg@LeaderChanged(None) =>
-         changeLeader(self.path.address)
-         log.debug(s"$msg")
+    case msg@ReachableMember(member) if member.status == Up =>
+      nodeStatus(member, "Up")
+      log.debug(s"$msg")
 
-      case event =>
-         log.debug(s"!Unknown event! $event")
+    case msg@ReachableMember(member) if member.status == WeaklyUp =>
+      nodeStatus(member, "Weakly Up")
+      log.debug(s"$msg")
 
-   }
+    case msg@UnreachableMember(member) =>
+      nodeStatus(member, "Unreachable")
+      log.debug(s"$msg")
+
+    case msg@LeaderChanged(Some(leader)) =>
+      changeLeader(leader)
+      log.debug(s"$msg")
+
+    case msg@LeaderChanged(None) =>
+      changeLeader(self.path.address)
+      log.debug(s"$msg")
+
+    case event =>
+      log.debug(s"!Unknown event! $event")
+
+  }
 
 
 }

@@ -36,10 +36,10 @@ object Client {
 
    final case class PointsAdded(name: String, points: Int) extends Message
 
-   def props(ref: ActorRef) = Props(new Client(ref))
+   def props(ref: ActorRef,team:ActorRef) = Props(new Client(ref,team))
 }
 
-class Client(ref: ActorRef) extends PersistentActor {
+class Client(ref: ActorRef,team:ActorRef) extends PersistentActor {
    override def persistenceId: String = self.path.name
 
    def updateState(event: PointsAdded): Unit = {
@@ -61,6 +61,7 @@ class Client(ref: ActorRef) extends PersistentActor {
 
          persist(PointsAdded(name, amount)) {
             a =>
+               team ! Team.PostPoints(name.substring(0,1),amount)
                updateState(a)
                sender() ! "Ok\n"
          }

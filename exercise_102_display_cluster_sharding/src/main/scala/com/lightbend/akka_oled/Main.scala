@@ -33,44 +33,54 @@ import spray.json._
 import scala.concurrent.Future
 import scala.concurrent.duration._
 
-object Main extends SprayJsonSupport with DefaultJsonProtocol{
-   case class AddPoints(points:Int)
+object Main extends SprayJsonSupport with DefaultJsonProtocol {
 
-   def main(args: Array[String]): Unit = {
-      val baseConfig = ConfigFactory.load()
-      implicit val transactionFormat = jsonFormat1(AddPoints)
-      implicit val system = ActorSystem("akka-oled", baseConfig)
-      val clusterStatusTracker: ActorRef = system.actorOf(ClusterShardingStatus.props(),ClusterShardingStatus.ACTOR_NAME)
+  case class AddPoints(points: Int)
 
-      implicit val timeout: Timeout = 6.seconds
-      implicit val executionContext = system.dispatcher
+  def main(args: Array[String]): Unit = {
+    val baseConfig = ConfigFactory.load()
+    implicit val transactionFormat = jsonFormat1(AddPoints)
+    implicit val system = ActorSystem("akka-oled", baseConfig)
+    val clusterStatusTracker: ActorRef = system.actorOf(ClusterShardingStatus.props(), ClusterShardingStatus.ACTOR_NAME)
 
-      val route =
-         pathPrefix("user" / """[0-9a-zA-Z]+""".r) { username =>
-            concat(
-               get {
-                  println("received get")
-                  val total:Future[Int] = clusterStatusTracker.ask(Get(username)).mapTo[Int]
-                  onSuccess(total) {
-                     a: Int => complete(a.toString + "\n")
-                  }
-               },
-               post {
-                  entity(as[AddPoints]) { transaction =>
-                     val ack = clusterStatusTracker.ask(PostPoints(username, transaction.points)).mapTo[String]
-                     onSuccess(ack){
-                        result => complete(result)
-                     }
-                  }
-               }
-            )
-         }
+    implicit val timeout: Timeout = 6.seconds
+    implicit val executionContext = system.dispatcher
+
+    val route = concat(
+      pathPrefix("user" / """[0-9a-zA-Z]+""".r) { username =>
+        concat(
+          get {
+            val total: Future[Int] = clusterStatusTracker.ask(Get(username)).mapTo[Int]
+            onSuccess(total) {
+              a: Int => complete(a.toString + "\n")
+            }
+          },
+          post {
+            entity(as[AddPoints]) { transaction =>
+              val ack = clusterStatusTracker.ask(PostPoints(username, transaction.points)).mapTo[String]
+              onSuccess(ack) {
+                result => complete(result)
+              }
+            }
+          }
+        )
+      },
+      pathPrefix("team" / """[0-9a-zA-Z]+""".r) { teamname =>
+        concat(
+          get {
+            val total: Future[Int] = clusterStatusTracker.ask(Team.Get(teamname)).mapTo[Int]
+            onSuccess(total) {
+              a: Int => complete(a.toString + "\n")
+            }
+          }
+        )
+      })
 
 
-      Http().bindAndHandle(route,
-         interface = baseConfig.getString("cluster-node-configuration.node-hostname"), port = 8080)
+    Http().bindAndHandle(route,
+      interface = baseConfig.getString("cluster-node-configuration.node-hostname"), port = 8080)
 
-      AkkaManagement(system).start
+    AkkaManagement(system).start
 
-   }
+  }
 }
